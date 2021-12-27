@@ -9,6 +9,8 @@ lib_mysqludf_sys is a udf plugin of MySQL.
 
 ![](https://cdn.jsdelivr.net/gh/yanghaoi/lib_mysqludf_sys/imgaes/exec_sql.png) 
 
+3.dumpfile lib_mysqludf_sys_x64.dll into lib/plugin
+
 ![](https://cdn.jsdelivr.net/gh/yanghaoi/lib_mysqludf_sys/imgaes/dumpfile.png) 
 
 ## Sys_exec
@@ -36,7 +38,7 @@ select sys_exec("whoami");drop function sys_exec; ```
 
 ![](https://cdn.jsdelivr.net/gh/yanghaoi/lib_mysqludf_sys/imgaes/Inject_file.png) 
 
-4.Show Gif
+4.GIF 
 
 ![](https://cdn.jsdelivr.net/gh/yanghaoi/lib_mysqludf_sys/imgaes/injectshellcode.gif) 
 
