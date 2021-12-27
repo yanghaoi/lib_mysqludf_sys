@@ -10,10 +10,10 @@ lib_mysqludf_sys is a udf plugin of MySQL.
 
 ## Sys_exec
 
-``` create function sys_exec returns string soname "lib_mysqludf_sys_x64.dll"; 
+1.``` create function sys_exec returns string soname "lib_mysqludf_sys_x64.dll"; 
 select sys_exec("chcp 65001 & ipconfig");drop function sys_exec; ```
 
-``` create function sys_exec returns string soname "lib_mysqludf_sys_x64.dll"; 
+2.``` create function sys_exec returns string soname "lib_mysqludf_sys_x64.dll"; 
 select sys_exec("whoami");drop function sys_exec; ```
 
 ## Inject
